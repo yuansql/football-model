@@ -1,0 +1,15 @@
+{
+  "best_trial": 27,
+  "best_score": 0.632996632996633,
+  "best_params": {
+    "max_depth": 4,
+    "learning_rate": 0.11309187199636991,
+    "subsample": 0.912835799023895,
+    "colsample_bytree": 0.8588239568625134,
+    "min_child_weight": 3,
+    "reg_lambda": 0.17355179257474318,
+    "reg_alpha": 0.016549673620676913,
+    "gamma": 3.744320291961228
+  },
+  "trials": 30
+}
