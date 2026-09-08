@@ -1,0 +1,47 @@
+Local SHAP Explanations (per-match)
+============================================================
+
+Match: 2026-03-22 19:45:00 | Fiorentina vs Inter
+  Predicted: H (conf=0.942) | Actual: D
+  P_H=0.942 P_D=0.040 P_A=0.018
+  Top 3 driving features:
+    rank_diff                           SHAP=+1.0741 pushes →
+    away_rank                           SHAP=+0.4959 pushes →
+    away_xg_for_roll10                  SHAP=+0.0747 pushes →
+  [plot] /Users/wumm/学习/AQQ/football-model/reports/shap_waterfall_Fiorentina_vs_Inter_2532.png
+
+Match: 2025-12-07 14:00:00 | Nice vs Angers
+  Predicted: D (conf=0.770) | Actual: A
+  P_H=0.080 P_D=0.770 P_A=0.151
+  Top 3 driving features:
+    away_xg_for_roll5                   SHAP=+0.1309 pushes →
+    away_xg_for_away_roll5              SHAP=+0.1041 pushes →
+    home_xg_against_roll5               SHAP=+0.0983 pushes →
+  [plot] /Users/wumm/学习/AQQ/football-model/reports/shap_waterfall_Nice_vs_Angers_1411.png
+
+Match: 2025-08-16 14:00:00 | Sunderland vs West Ham
+  Predicted: A (conf=0.959) | Actual: H
+  P_H=0.008 P_D=0.033 P_A=0.959
+  Top 3 driving features:
+    rank_diff                           SHAP=+0.9659 pushes →
+    home_rank                           SHAP=+0.3293 pushes →
+    away_rank                           SHAP=+0.2038 pushes →
+  [plot] /Users/wumm/学习/AQQ/football-model/reports/shap_waterfall_Sunderland_vs_West_Ham_180.png
+
+Match: 2026-02-15 19:45:00 | Lyon vs Nice
+  Predicted: A (conf=0.633) | Actual: H
+  P_H=0.059 P_D=0.308 P_A=0.633
+  Top 3 driving features:
+    rank_diff                           SHAP=+0.7462 pushes →
+    home_rank                           SHAP=+0.1613 pushes →
+    home_points_home_roll10             SHAP=-0.0568 pushes ←
+  [plot] /Users/wumm/学习/AQQ/football-model/reports/shap_waterfall_Lyon_vs_Nice_1477.png
+
+Match: 2025-11-22 14:30:00 | Borussia Dortmund vs VfB Stuttgart
+  Predicted: A (conf=0.458) | Actual: D
+  P_H=0.235 P_D=0.307 P_A=0.458
+  Top 3 driving features:
+    home_rank                           SHAP=+0.1747 pushes →
+    rank_diff                           SHAP=+0.1182 pushes →
+    away_rank                           SHAP=-0.0920 pushes ←
+  [plot] /Users/wumm/学习/AQQ/football-model/reports/shap_waterfall_Borussia_Dortmund_vs_VfB_Stuttgart_1837.png
