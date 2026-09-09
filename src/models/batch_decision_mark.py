@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 """
 Batch Decision Marker for upcoming fixtures.
-
-1. Fetches upcoming (unplayed) fixtures from Understat for all supported leagues.
-2. Runs decision_marker logic on each match.
-3. Outputs a structured Markdown report for v17 analysts.
+Outputs a structured Markdown report for v17 analysts.
 """
 
 import argparse
@@ -20,26 +17,13 @@ import xgboost as xgb
 import soccerdata as sd
 
 ROOT = Path(__file__).resolve().parents[2]
-MODEL_DIR = ROOT / "models"
-PROC_DIR = ROOT / "data" / "processed"
-MAPPING_PATH = ROOT / "config" / "team_name_mapping.json"
-REPORTS_DIR = ROOT / "reports"
-WINDOWS = [3, 5, 10]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-# ------------------------------------------------------------------
-# Config
-# ------------------------------------------------------------------
-LEAGUES = [
-    "ENG-Premier League",
-    "ESP-La Liga",
-    "ITA-Serie A",
-    "GER-Bundesliga",
-    "FRA-Ligue 1",
-]
-
-
-def normalize_team_name(name: str, mapping: dict) -> str:
-    return mapping.get("aliases", {}).get(name, name)
+from src.core.config import MODEL_DIR, PROC_DIR, REPORTS_DIR, LEAGUES
+from src.core.features_live import (
+    normalize_team_name, compute_live_features,
+)
 
 
 def load_model(model_stem: str):
@@ -56,120 +40,13 @@ def fetch_fixtures(league: str, days_ahead: int = 7):
     sched = understat.read_schedule()
     if isinstance(sched.index, pd.MultiIndex):
         sched = sched.reset_index(drop=True)
-    sched = sched[sched["is_result"] == False].copy()
+    sched = sched[~sched["is_result"]].copy()
     if "date" not in sched.columns:
         return pd.DataFrame()
     sched["date"] = pd.to_datetime(sched["date"])
     cutoff = datetime.now() + timedelta(days=days_ahead)
     sched = sched[sched["date"] <= cutoff]
     return sched.sort_values("date")
-
-
-def build_team_records(league: str, mapping: dict):
-    """Build historical team records up to now for feature computation."""
-    understat = sd.Understat(leagues=league)
-    matches = understat.read_schedule()
-    if isinstance(matches.index, pd.MultiIndex):
-        matches = matches.reset_index(drop=True)
-    df = matches[matches["is_result"] == True].copy()
-    df = df.sort_values("date").reset_index(drop=True)
-    df["home_team"] = df["home_team"].apply(lambda x: normalize_team_name(x, mapping))
-    df["away_team"] = df["away_team"].apply(lambda x: normalize_team_name(x, mapping))
-    df["result"] = np.where(df["home_goals"] > df["away_goals"], "H",
-                            np.where(df["home_goals"] < df["away_goals"], "A", "D"))
-
-    records = []
-    for _, row in df.iterrows():
-        for team, is_home, gf, ga, xgf, xga, res in [
-            (row["home_team"], 1, row["home_goals"], row["away_goals"], row["home_xg"], row["away_xg"], row["result"]),
-            (row["away_team"], 0, row["away_goals"], row["home_goals"], row["away_xg"], row["home_xg"], row["result"]),
-        ]:
-            pts = 3 if (res == "H" and is_home) or (res == "A" and not is_home) else (1 if res == "D" else 0)
-            records.append({
-                "date": row["date"], "team": team, "is_home": is_home,
-                "goals_for": gf, "goals_against": ga, "xg_for": xgf, "xg_against": xga,
-                "points": pts, "win": 1 if pts == 3 else 0, "draw": 1 if pts == 1 else 0, "loss": 1 if pts == 0 else 0,
-            })
-
-    tr = pd.DataFrame(records).sort_values(["team", "date"]).reset_index(drop=True)
-
-    roll_cols = []
-    for w in WINDOWS:
-        for col in ["goals_for", "goals_against", "xg_for", "xg_against", "points", "win", "draw", "loss"]:
-            cname = f"{col}_roll{w}"
-            tr[cname] = tr.groupby("team")[col].shift(1).rolling(w, min_periods=1).mean().values
-            roll_cols.append(cname)
-        for col in ["goals_for", "goals_against", "xg_for", "xg_against", "points"]:
-            tr[f"{col}_home_roll{w}"] = tr[tr["is_home"]==1].groupby("team")[col].shift(1).rolling(w, min_periods=1).mean().reindex(tr.index).values
-            tr[f"{col}_away_roll{w}"] = tr[tr["is_home"]==0].groupby("team")[col].shift(1).rolling(w, min_periods=1).mean().reindex(tr.index).values
-            roll_cols.append(f"{col}_home_roll{w}")
-            roll_cols.append(f"{col}_away_roll{w}")
-
-        tr[f"home_advantage_pts_roll{w}"] = tr[f"points_home_roll{w}"] - tr[f"points_away_roll{w}"]
-        tr[f"home_advantage_xg_roll{w}"] = tr[f"xg_for_home_roll{w}"] - tr[f"xg_for_away_roll{w}"]
-        tr[f"home_advantage_xga_roll{w}"] = tr[f"xg_against_home_roll{w}"] - tr[f"xg_against_away_roll{w}"]
-        roll_cols.extend([f"home_advantage_pts_roll{w}", f"home_advantage_xg_roll{w}", f"home_advantage_xga_roll{w}"])
-
-    tr["momentum_pts"] = tr["points_roll3"] / (tr["points_roll10"] + 0.1)
-    tr["momentum_xg"] = tr["xg_for_roll3"] / (tr["xg_for_roll10"] + 0.1)
-    tr["momentum_xga"] = tr["xg_against_roll3"] / (tr["xg_against_roll10"] + 0.1)
-    roll_cols.extend(["momentum_pts", "momentum_xg", "momentum_xga"])
-
-    return df, tr, roll_cols
-
-
-def compute_virtual_row(df, tr, roll_cols, home_team, away_team, league):
-    home_games = len(df[(df["home_team"] == home_team) | (df["away_team"] == home_team)])
-    away_games = len(df[(df["home_team"] == away_team) | (df["away_team"] == away_team)])
-    if home_games < 5 or away_games < 5:
-        return None, {"home_games": home_games, "away_games": away_games}
-
-    home_latest = tr[tr["team"] == home_team].iloc[-1]
-    away_latest = tr[tr["team"] == away_team].iloc[-1]
-
-    h2h = df[(((df["home_team"]==home_team)&(df["away_team"]==away_team))|((df["home_team"]==away_team)&(df["away_team"]==home_team)))].tail(5)
-    h2h_home_win = (h2h["result"] == "H").mean() if len(h2h) > 0 else 0.5
-    h2h_draw = (h2h["result"] == "D").mean() if len(h2h) > 0 else 0.25
-
-    table = {}
-    for _, row in df.iterrows():
-        for t, gf, ga, res, is_h in [(row["home_team"], row["home_goals"], row["away_goals"], row["result"], True),
-                                       (row["away_team"], row["away_goals"], row["home_goals"], row["result"], False)]:
-            if t not in table: table[t] = {"pts": 0, "gd": 0, "played": 0}
-            pts = 3 if (res == "H" and is_h) or (res == "A" and not is_h) else (1 if res == "D" else 0)
-            table[t]["pts"] += pts
-            table[t]["gd"] += gf - ga
-            table[t]["played"] += 1
-    ranked = sorted(table.items(), key=lambda x: (x[1]["pts"], x[1]["gd"]), reverse=True)
-    rank = {team: i+1 for i, (team, _) in enumerate(ranked)}
-    home_rank = rank.get(home_team, len(rank)//2)
-    away_rank = rank.get(away_team, len(rank)//2)
-
-    virtual = {}
-    proc_df = pd.read_csv(PROC_DIR / "features_multi_league_v2.csv")
-    virtual["league_enc"] = proc_df[proc_df["league"]==league]["league_enc"].iloc[0] if len(proc_df[proc_df["league"]==league]) > 0 else 0
-    for col in roll_cols:
-        virtual[f"home_{col}"] = home_latest[col] if col in home_latest else 0
-        virtual[f"away_{col}"] = away_latest[col] if col in away_latest else 0
-
-    virtual["h2h_home_win_rate"] = h2h_home_win
-    virtual["h2h_draw_rate"] = h2h_draw
-    virtual["h2h_matches_count"] = len(h2h)
-    virtual["home_rank"] = home_rank
-    virtual["away_rank"] = away_rank
-    virtual["rank_diff"] = away_rank - home_rank
-
-    for w in WINDOWS:
-        for metric in ["points", "xg_for", "xg_against", "goals_for", "goals_against"]:
-            virtual[f"diff_{metric}_roll{w}"] = virtual[f"home_{metric}_roll{w}"] - virtual[f"away_{metric}_roll{w}"]
-        virtual[f"diff_home_advantage_pts_roll{w}"] = virtual[f"home_home_advantage_pts_roll{w}"] - virtual[f"away_home_advantage_pts_roll{w}"]
-
-    form = {
-        "home": {"rank": home_rank, "last5_pts": home_latest.get("points_roll5", 0), "last5_xg": home_latest.get("xg_for_roll5", 0)},
-        "away": {"rank": away_rank, "last5_pts": away_latest.get("points_roll5", 0), "last5_xg": away_latest.get("xg_for_roll5", 0)},
-        "h2h": {"matches": len(h2h), "home_win_rate": h2h_home_win},
-    }
-    return pd.Series(virtual), form
 
 
 def predict_binary(model, feature_cols, row):
@@ -180,7 +57,7 @@ def predict_binary(model, feature_cols, row):
     return float(model.predict(xgb.DMatrix(X))[0])
 
 
-def get_tag(prob_away: float, form: dict) -> tuple:
+def get_tag(prob_away: float) -> tuple[str, str]:
     if prob_away <= 0.20:
         return "CONFIDENT_HOME", "模型主导，情报验证"
     elif prob_away <= 0.35:
@@ -207,6 +84,36 @@ def tag_emoji(tag: str) -> str:
     }.get(tag, "❓")
 
 
+def process_match(model, feature_cols, league, home, away, mapping, league_enc, date_str):
+    """Process a single match and return result dict."""
+    virtual_row, form_or_err, _ = compute_live_features(league, home, away, mapping, league_enc)
+
+    if virtual_row is None:
+        return {
+            "date": date_str, "league": league, "home": home, "away": away,
+            "tag": "INSUFFICIENT_DATA", "emoji": tag_emoji("INSUFFICIENT_DATA"),
+            "prob_home": None, "prob_away": None,
+            "home_rank": "-", "away_rank": "-",
+            "home_form": 0.0, "away_form": 0.0,
+            "v17_action": "跳过模型，纯情报分析",
+        }
+
+    prob_away = predict_binary(model, feature_cols, virtual_row)
+    tag, action = get_tag(prob_away)
+    conf_home = 1 - prob_away
+    form = form_or_err
+
+    return {
+        "date": date_str, "league": league, "home": home, "away": away,
+        "tag": tag, "emoji": tag_emoji(tag),
+        "prob_home": round(conf_home, 3), "prob_away": round(prob_away, 3),
+        "home_rank": form["home"]["rank"], "away_rank": form["away"]["rank"],
+        "home_form": round(form["home"]["last5_pts"], 1),
+        "away_form": round(form["away"]["last5_pts"], 1),
+        "v17_action": action,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="xgb_binary_tuned")
@@ -214,17 +121,23 @@ def main():
     parser.add_argument("--out", type=str, default="")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--leagues", nargs="+", default=LEAGUES)
-    parser.add_argument("--simulate", action="store_true", help="Use historical matches as fake fixtures for testing")
-    parser.add_argument("--simulate-count", type=int, default=10, help="Number of simulated fixtures per league")
-    parser.add_argument("--fixtures-csv", type=str, default="", help="Path to CSV with columns: league,date,home,away")
+    parser.add_argument("--simulate", action="store_true")
+    parser.add_argument("--simulate-count", type=int, default=10)
+    parser.add_argument("--fixtures-csv", type=str, default="")
     args = parser.parse_args()
 
-    mapping = json.loads(MAPPING_PATH.read_text()) if MAPPING_PATH.exists() else {}
+    mapping_path = Path(__file__).resolve().parents[2] / "config" / "team_name_mapping.json"
+    mapping = json.loads(mapping_path.read_text()) if mapping_path.exists() else {}
     model, feature_cols = load_model(args.model)
+
+    # League encodings
+    proc_df = pd.read_csv(PROC_DIR / "features_multi_league_v2.csv")
+    league_enc_map = {lg: int(proc_df[proc_df["league"] == lg]["league_enc"].iloc[0])
+                      for lg in proc_df["league"].unique()}
 
     results = []
 
-    # Mode 1: Manual CSV fixtures
+    # Mode 1: Manual CSV
     if args.fixtures_csv:
         fixtures_csv = pd.read_csv(args.fixtures_csv)
         required = {"league", "date", "home", "away"}
@@ -236,117 +149,85 @@ def main():
             home = normalize_team_name(row["home"], mapping)
             away = normalize_team_name(row["away"], mapping)
             date = str(row["date"])
-            df, tr, roll_cols = build_team_records(league, mapping)
-            if df.empty:
-                print(f"Warning: no historical data for {league}, skipping.", file=sys.stderr)
-                continue
-            virtual_row, form = compute_virtual_row(df, tr, roll_cols, home, away, league)
-            if virtual_row is None:
-                tag = "INSUFFICIENT_DATA"
-                prob_away = None
-                conf_home = None
-                action = "跳过模型，纯情报分析"
-            else:
-                prob_away = predict_binary(model, feature_cols, virtual_row)
-                tag, action = get_tag(prob_away, form)
-                conf_home = 1 - prob_away
-            results.append({
-                "date": date,
-                "league": league,
-                "home": home,
-                "away": away,
-                "tag": tag,
-                "emoji": tag_emoji(tag),
-                "prob_home": round(conf_home, 3) if conf_home is not None else None,
-                "prob_away": round(prob_away, 3) if prob_away is not None else None,
-                "home_rank": form.get("home", {}).get("rank", "-"),
-                "away_rank": form.get("away", {}).get("rank", "-"),
-                "home_form": round(form.get("home", {}).get("last5_pts", 0), 1),
-                "away_form": round(form.get("away", {}).get("last5_pts", 0), 1),
-                "v17_action": action,
-            })
+            enc = league_enc_map.get(league, 0)
+            try:
+                results.append(process_match(model, feature_cols, league, home, away, mapping, enc, date))
+            except Exception as e:
+                print(f"  [skip] {league}: {home} vs {away} — {e}", file=sys.stderr)
+                results.append({
+                    "date": date, "league": league, "home": home, "away": away,
+                    "tag": "ERROR", "emoji": "❌",
+                    "prob_home": None, "prob_away": None,
+                    "home_rank": "-", "away_rank": "-",
+                    "home_form": 0.0, "away_form": 0.0,
+                    "v17_action": f"处理失败: {e}",
+                })
+
     else:
-        # Mode 2: Auto-fetch from Understat
+        # Mode 2: Auto-fetch fixtures
         for league in args.leagues:
             print(f"Fetching fixtures for {league} ...", file=sys.stderr)
-            fixtures = fetch_fixtures(league, args.days)
+            try:
+                fixtures = fetch_fixtures(league, args.days)
+            except Exception as e:
+                print(f"  [skip] Failed to fetch fixtures for {league}: {e}", file=sys.stderr)
+                continue
+            enc = league_enc_map.get(league, 0)
+
             if fixtures.empty:
                 print(f"  No upcoming fixtures found.", file=sys.stderr)
                 continue
-
-            df, tr, roll_cols = build_team_records(league, mapping)
 
             for _, row in fixtures.iterrows():
                 home = normalize_team_name(row["home_team"], mapping)
                 away = normalize_team_name(row["away_team"], mapping)
                 date = row["date"].strftime("%Y-%m-%d") if hasattr(row["date"], "strftime") else str(row["date"])
+                try:
+                    results.append(process_match(model, feature_cols, league, home, away, mapping, enc, date))
+                except Exception as e:
+                    print(f"  [skip] {league}: {home} vs {away} — {e}", file=sys.stderr)
+                    results.append({
+                        "date": date, "league": league, "home": home, "away": away,
+                        "tag": "ERROR", "emoji": "❌",
+                        "prob_home": None, "prob_away": None,
+                        "home_rank": "-", "away_rank": "-",
+                        "home_form": 0.0, "away_form": 0.0,
+                        "v17_action": f"处理失败: {e}",
+                    })
 
-                virtual_row, form = compute_virtual_row(df, tr, roll_cols, home, away, league)
-                if virtual_row is None:
-                    tag = "INSUFFICIENT_DATA"
-                    prob_away = None
-                    conf_home = None
-                    action = "跳过模型，纯情报分析"
-                else:
-                    prob_away = predict_binary(model, feature_cols, virtual_row)
-                    tag, action = get_tag(prob_away, form)
-                    conf_home = 1 - prob_away
-
-                results.append({
-                    "date": date,
-                    "league": league,
-                    "home": home,
-                    "away": away,
-                    "tag": tag,
-                    "emoji": tag_emoji(tag),
-                    "prob_home": round(conf_home, 3) if conf_home is not None else None,
-                    "prob_away": round(prob_away, 3) if prob_away is not None else None,
-                    "home_rank": form.get("home", {}).get("rank", "-"),
-                    "away_rank": form.get("away", {}).get("rank", "-"),
-                    "home_form": round(form.get("home", {}).get("last5_pts", 0), 1),
-                    "away_form": round(form.get("away", {}).get("last5_pts", 0), 1),
-                    "v17_action": action,
-                })
-
+    # Fallback: simulate mode when no fixtures found
     if not results and args.simulate:
         print("Simulating historical fixtures as upcoming matches...", file=sys.stderr)
         for league in args.leagues:
-            df, tr, roll_cols = build_team_records(league, mapping)
+            enc = league_enc_map.get(league, 0)
+            try:
+                from src.core.features_live import fetch_league_matches
+                df = fetch_league_matches(league, mapping)
+            except Exception as e:
+                print(f"  [skip] Failed to fetch history for {league}: {e}", file=sys.stderr)
+                continue
             if df.empty:
                 continue
-            fake_fixtures = df.tail(args.simulate_count).copy()
-            for _, row in fake_fixtures.iterrows():
+            fake = df.tail(args.simulate_count).copy()
+            for _, row in fake.iterrows():
                 home = normalize_team_name(row["home_team"], mapping)
                 away = normalize_team_name(row["away_team"], mapping)
                 date = row["date"].strftime("%Y-%m-%d") if hasattr(row["date"], "strftime") else str(row["date"])
-                virtual_row, form = compute_virtual_row(df, tr, roll_cols, home, away, league)
-                if virtual_row is None:
-                    tag = "INSUFFICIENT_DATA"
-                    prob_away = None
-                    conf_home = None
-                    action = "跳过模型，纯情报分析"
-                else:
-                    prob_away = predict_binary(model, feature_cols, virtual_row)
-                    tag, action = get_tag(prob_away, form)
-                    conf_home = 1 - prob_away
-                results.append({
-                    "date": date,
-                    "league": league,
-                    "home": home,
-                    "away": away,
-                    "tag": tag,
-                    "emoji": tag_emoji(tag),
-                    "prob_home": round(conf_home, 3) if conf_home is not None else None,
-                    "prob_away": round(prob_away, 3) if prob_away is not None else None,
-                    "home_rank": form.get("home", {}).get("rank", "-"),
-                    "away_rank": form.get("away", {}).get("rank", "-"),
-                    "home_form": round(form.get("home", {}).get("last5_pts", 0), 1),
-                    "away_form": round(form.get("away", {}).get("last5_pts", 0), 1),
-                    "v17_action": action,
-                })
+                try:
+                    results.append(process_match(model, feature_cols, league, home, away, mapping, enc, date))
+                except Exception as e:
+                    print(f"  [skip] {league}: {home} vs {away} — {e}", file=sys.stderr)
+                    results.append({
+                        "date": date, "league": league, "home": home, "away": away,
+                        "tag": "ERROR", "emoji": "❌",
+                        "prob_home": None, "prob_away": None,
+                        "home_rank": "-", "away_rank": "-",
+                        "home_form": 0.0, "away_form": 0.0,
+                        "v17_action": f"处理失败: {e}",
+                    })
 
     if not results:
-        print("No fixtures found in the next {} days.".format(args.days))
+        print("No fixtures found.")
         return
 
     df_out = pd.DataFrame(results)
@@ -356,39 +237,43 @@ def main():
         return
 
     # Markdown report
-    lines = []
-    lines.append("# football-model 周报：未来 {} 天 Decision Marker".format(args.days))
-    lines.append("")
-    lines.append("生成时间: {}".format(datetime.now().strftime("%Y-%m-%d %H:%M")))
-    lines.append("")
-    lines.append("## 速查表")
-    lines.append("")
-    lines.append("| 日期 | 联赛 | 主队 | 客队 | 标记 | 主不败 | 客不败 | 排名 | 近5积分 | v17 建议 |")
-    lines.append("|---|---|---|---|---|---|---|---|---|---|")
+    lines = [
+        "# football-model 周报：未来 {} 天 Decision Marker".format(args.days),
+        "",
+        "生成时间: {}".format(datetime.now().strftime("%Y-%m-%d %H:%M")),
+        "",
+        "## 速查表",
+        "",
+        "| 日期 | 联赛 | 主队 | 客队 | 标记 | 主不败 | 客不败 | 排名 | 近5积分 | v17 建议 |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
     for _, r in df_out.iterrows():
+        lg_short = r["league"].replace("ENG-Premier League", "EPL").replace("GER-Bundesliga", "Bundesliga")
         lines.append("| {} | {} | {} | {} | {} {} | {} | {} | {}v{} | {}v{} | {} |".format(
-            r["date"], r["league"].replace("ENG-Premier League", "EPL").replace("GER-Bundesliga", "Bundesliga"),
-            r["home"], r["away"], r["emoji"], r["tag"],
+            r["date"], lg_short, r["home"], r["away"], r["emoji"], r["tag"],
             r["prob_home"] if r["prob_home"] is not None else "-",
             r["prob_away"] if r["prob_away"] is not None else "-",
             r["home_rank"], r["away_rank"],
             r["home_form"], r["away_form"],
             r["v17_action"],
         ))
-    lines.append("")
-    lines.append("## 标记说明")
-    lines.append("")
-    lines.append("| 标记 | 含义 | v17 操作 |")
-    lines.append("|---|---|---|")
-    lines.append("| 🟢 CONFIDENT_HOME | 模型强信号主不败 | 模型主导，情报验证利空 |")
-    lines.append("| 🟡 LEAN_HOME | 模型倾向主不败 | 模型参考，情报平衡 |")
-    lines.append("| ⚪ TOSS_UP | 模型无明确方向 | 情报主导，忽略模型 |")
-    lines.append("| 🟠 LEAN_AWAY | 模型倾向客不败 | **情报主导**，模型弱信号（客不败历史命中低） |")
-    lines.append("| 🔴 CONFIDENT_AWAY | 模型强信号客不败 | 罕见！逐条验证反剧本 |")
-    lines.append("| ⚫ INSUFFICIENT_DATA | 数据不足 | 跳过模型 |")
-    lines.append("")
-    lines.append("## 详细分场")
-    lines.append("")
+
+    lines.extend([
+        "",
+        "## 标记说明",
+        "",
+        "| 标记 | 含义 | v17 操作 |",
+        "|---|---|---|",
+        "| 🟢 CONFIDENT_HOME | 模型强信号主不败 | 模型主导，情报验证利空 |",
+        "| 🟡 LEAN_HOME | 模型倾向主不败 | 模型参考，情报平衡 |",
+        "| ⚪ TOSS_UP | 模型无明确方向 | 情报主导，忽略模型 |",
+        "| 🟠 LEAN_AWAY | 模型倾向客不败 | **情报主导**，模型弱信号（客不败历史命中低） |",
+        "| 🔴 CONFIDENT_AWAY | 模型强信号客不败 | 罕见！逐条验证反剧本 |",
+        "| ⚫ INSUFFICIENT_DATA | 数据不足 | 跳过模型 |",
+        "",
+        "## 详细分场",
+        "",
+    ])
     for _, r in df_out.iterrows():
         lines.append("### {} {} vs {}".format(r["emoji"], r["home"], r["away"]))
         lines.append("- **日期**: {} | **联赛**: {}".format(r["date"], r["league"]))

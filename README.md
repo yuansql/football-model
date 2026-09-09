@@ -45,6 +45,8 @@ source .venv/bin/activate
 | `src/models/v17_full_report.py` | **一键生成 v17 完整报告** |
 | `src/models/decision_marker.py` | **可信度标记**（替代硬预测，输出情报权重建议） |
 | `src/models/batch_decision_mark.py` | **批量标记**（未来一轮赛程，输出 Markdown 报告；支持 `--simulate` 模拟测试） |
+| `src/core/config.py` | **集中配置**（路径、联赛、窗口、分列日期） |
+| `src/core/features_live.py` | **公共特征计算**（实时特征抽取，消除 3 份重复代码） |
 | `src/evaluation/shap_analysis.py` | SHAP 可解释性分析 |
 | `src/evaluation/backtest_roi.py` | ROI 回测模拟 |
 | `src/evaluation/calibrate.py` | 概率校准（Platt/Isotonic） |

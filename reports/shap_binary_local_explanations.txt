@@ -1,0 +1,18 @@
+Local SHAP Explanations (per-match)
+============================================================
+
+Match: 2026-01-15 17:30:00 | Verona vs Bologna
+  Predicted: 客不败 (客不败_prob=0.868) | Actual: A
+  Top 3 driving features:
+    rank_diff                           SHAP=+1.3484 pushes →
+    home_rank                           SHAP=+0.5868 pushes →
+    home_xg_against_home_roll10         SHAP=-0.1272 pushes ←
+  [plot] /Users/wumm/学习/AQQ/football-model/reports/shap_binary_waterfall_Verona_vs_Bologna_2431.png
+
+Match: 2026-03-22 13:00:00 | Barcelona vs Rayo Vallecano
+  Predicted: 主不败 (客不败_prob=0.055) | Actual: H
+  Top 3 driving features:
+    rank_diff                           SHAP=-1.8227 pushes ←
+    home_rank                           SHAP=-0.6071 pushes ←
+    diff_points_roll10                  SHAP=+0.1322 pushes →
+  [plot] /Users/wumm/学习/AQQ/football-model/reports/shap_binary_waterfall_Barcelona_vs_Rayo_Vallecano_1033.png
