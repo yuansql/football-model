@@ -139,6 +139,8 @@ football-model/
 
 详细集成说明见 [`docs/v17-integration.md`](docs/v17-integration.md)。
 
+**实战运行手册**: [`docs/v17-operational-guide.md`](docs/v17-operational-guide.md) — 每周工作流、标记速查、紧急处理
+
 ### 每周分析师周报（批量标记）
 
 ```bash

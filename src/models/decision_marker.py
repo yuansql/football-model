@@ -183,7 +183,7 @@ def get_tag(prob_away: float, form: dict) -> tuple[str, str]:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="xgb_binary_v1")
+    parser.add_argument("--model", default="xgb_binary_tuned")
     parser.add_argument("--league", required=True)
     parser.add_argument("--home", required=True)
     parser.add_argument("--away", required=True)

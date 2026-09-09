@@ -32,7 +32,7 @@ def to_binary(result):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="xgb_binary_v1")
+    parser.add_argument("--model", default="xgb_binary_tuned")
     parser.add_argument("--features", default=PROC_DIR / "features_multi_league_v2.csv")
     parser.add_argument("--league", required=True)
     parser.add_argument("--date-from", required=True)

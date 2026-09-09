@@ -209,7 +209,7 @@ def tag_emoji(tag: str) -> str:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="xgb_binary_v1")
+    parser.add_argument("--model", default="xgb_binary_tuned")
     parser.add_argument("--days", type=int, default=7)
     parser.add_argument("--out", type=str, default="")
     parser.add_argument("--json", action="store_true")

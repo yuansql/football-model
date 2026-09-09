@@ -1,0 +1,22 @@
+{
+  "best_trial": 46,
+  "best_score": 1.23253,
+  "best_params": {
+    "max_depth": 6,
+    "learning_rate": 0.02226029786937246,
+    "subsample": 0.7780883474929938,
+    "colsample_bytree": 0.7050333428111997,
+    "min_child_weight": 8,
+    "reg_lambda": 9.938441128509911,
+    "reg_alpha": 0.14671222839922718,
+    "gamma": 4.82191478867593,
+    "scale_pos_weight": 1.848993612090136
+  },
+  "trials": 100,
+  "evaluation": {
+    "train": {"acc": 0.8697, "auc": 0.9442, "f1": 0.7995, "logloss": 0.3427},
+    "val": {"acc": 0.8092, "auc": 0.8742, "f1": 0.7167, "logloss": 0.4243},
+    "test": {"acc": 0.7352, "auc": 0.7846, "f1": 0.6050, "logloss": 0.5268}
+  },
+  "notes": "Significant overfitting: train-test AUC gap ~16%. Model relies heavily on rank_diff and recent form."
+}

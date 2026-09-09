@@ -93,7 +93,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--features", default=PROC_DIR / "features_multi_league_v2.csv")
     parser.add_argument("--trials", type=int, default=50)
-    parser.add_argument("--output", default=MODEL_DIR / "xgb_binary_tuned")
+    parser.add_argument("--output", type=str, default="xgb_binary_tuned")
     parser.add_argument("--timeout", type=int, default=3600, help="Max seconds per trial")
     args = parser.parse_args()
 
@@ -146,10 +146,11 @@ def main():
         print(f"[{name}] Acc={acc:.4f} AUC={auc:.4f} F1={f1:.4f} LogLoss={ll:.4f}")
 
     # Save
-    final_model.save_model(str(args.output.with_suffix(".json")))
-    with open(args.output.with_suffix(".pkl"), "wb") as f:
+    output_path = MODEL_DIR / args.output
+    final_model.save_model(str(output_path.with_suffix(".json")))
+    with open(output_path.with_suffix(".pkl"), "wb") as f:
         pickle.dump({"feature_cols": feature_cols, "classes": ["主不败", "客不败"]}, f)
-    print(f"\n[save] {args.output}.json")
+    print(f"\n[save] {output_path}.json")
 
     study_path = OUT_DIR / "optuna_binary_study.json"
     study_path.write_text(json.dumps({
