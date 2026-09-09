@@ -47,7 +47,8 @@ source .venv/bin/activate
 | `src/models/batch_decision_mark.py` | **批量标记**（未来一轮赛程，输出 Markdown 报告；支持 `--simulate` 模拟测试） |
 | `src/core/config.py` | **集中配置**（路径、联赛、窗口、分列日期） |
 | `src/core/features_live.py` | **公共特征计算**（实时特征抽取，消除 3 份重复代码） |
-| `src/evaluation/shap_analysis.py` | SHAP 可解释性分析 |
+| `src/evaluation/shap_analysis.py` | SHAP 可解释性分析（三分类模型） |
+| `src/evaluation/shap_analysis_binary.py` | SHAP 可解释性分析（二分类模型） |
 | `src/evaluation/backtest_roi.py` | ROI 回测模拟 |
 | `src/evaluation/calibrate.py` | 概率校准（Platt/Isotonic） |
 
